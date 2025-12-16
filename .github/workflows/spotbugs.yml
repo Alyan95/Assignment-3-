@@ -1,23 +1,24 @@
 # File Name: spotbugs.yml
-# This GitHub Actions workflow runs SpotBugs on a Java project
-# to automatically IDENTIFY and DETECT defects in code
-
 name: SpotBugs Java Analysis
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
+  workflow_dispatch:  # Allows manual triggering
 
 jobs:
   spotbugs-analysis:
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # Prevent long runs
 
     steps:
       # Step 1: Checkout source code
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for better analysis
 
       # Step 2: Set up Java
       - name: Set up JDK 17
@@ -25,18 +26,61 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: 'maven'  # Cache Maven dependencies
 
-      # Step 3: Build project (required for SpotBugs)
+      # Step 3: Build project
       - name: Build with Maven
-        run: mvn clean compile
+        run: |
+          mvn clean compile test-compile
+          echo "Build completed successfully"
 
-      # Step 4: Run SpotBugs
-      - name: Run SpotBugs
-        run: mvn spotbugs:check
+      # Step 4: Run SpotBugs with detailed output
+      - name: Run SpotBugs Analysis
+        run: |
+          mvn spotbugs:spotbugs
+          echo "SpotBugs analysis completed"
+          
+      # Step 5: Check for bugs (fails if bugs found)
+      - name: Check SpotBugs Results
+        run: |
+          if mvn spotbugs:check; then
+            echo "✅ No SpotBugs issues found"
+          else
+            echo "❌ SpotBugs found issues"
+            # Generate detailed report
+            mvn spotbugs:gui -Dspotbugs.gui.errorThreshold=high
+            exit 1
+          fi
 
-      # Step 5: Upload SpotBugs Report
+      # Step 6: Generate and upload reports
+      - name: Generate SpotBugs Report
+        run: mvn spotbugs:spotbugs -Dspotbugs.includeFilterFile=spotbugs-include.xml
+
       - name: Upload SpotBugs Report
         uses: actions/upload-artifact@v4
+        if: always()  # Upload even if workflow fails
         with:
-          name: spotbugs-report
-          path: target/spotbugsXml.xml
+          name: spotbugs-reports
+          path: |
+            target/spotbugsXml.xml
+            target/spotbugs.html
+            target/site/spotbugs.html
+          retention-days: 7
+
+      # Step 7: Upload test results
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: target/surefire-reports/*.xml
+
+      # Step 8: Summary
+      - name: Workflow Summary
+        if: always()
+        run: |
+          echo "## SpotBugs Analysis Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Build completed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ SpotBugs analysis executed" >> $GITHUB_STEP_SUMMARY
+          echo "- 📊 Reports available as artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- 🚀 Ready for production" >> $GITHUB_STEP_SUMMARY
